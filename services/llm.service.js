@@ -23,19 +23,22 @@ const detectLanguage = (text) => {
 };
 
 // ===============================
-// 🧹 CLEAN OUTPUT (HARD FILTER)
+// 🧹 ADVANCED CLEAN OUTPUT
 // ===============================
 const cleanOutput = (text) => {
     if (!text) return "";
 
     return text
+        // remove hidden reasoning
         .replace(/<think[\s\S]*?<\/think>/gi, "")
         .replace(/```[\s\S]*?```/g, "")
         .replace(/<[^>]*>/g, "")
-        .replace(/okay[, ]?the user[\s\S]*$/gi, "")
-        .replace(/let me[\s\S]*$/gi, "")
-        .replace(/i think[\s\S]*$/gi, "")
-        .replace(/based on the context[\s\S]*$/gi, "")
+
+        // 🔥 kill reasoning leaks aggressively
+        .replace(/(okay|let me|i think|based on|the user is asking)[\s\S]*?:/gi, "")
+        .replace(/(the user is asking)[\s\S]*/gi, "")
+
+        // clean spaces
         .replace(/\n+/g, " ")
         .replace(/\s+/g, " ")
         .trim();
@@ -63,7 +66,7 @@ export const prepareForTTS = (text) => {
 };
 
 // ===============================
-// 🧠 GENERATE RESPONSE (ULTRA FINAL)
+// 🧠 GENERATE RESPONSE (FINAL PRO)
 // ===============================
 export const generateResponse = async (systemPrompt, userQuery) => {
     const startTime = Date.now();
@@ -81,71 +84,76 @@ export const generateResponse = async (systemPrompt, userQuery) => {
                 ? `
 Respond ONLY in Marathi.
 - Use natural spoken Marathi
-- Keep it simple and human-like
+- Keep it human and conversational
 `
                 : `
 Respond ONLY in English.
-- Be clear, natural, and conversational
+- Be natural, clear, and conversational
 `;
 
         // ===============================
-        // 🧠 ULTRA PROMPT (SAAS LEVEL)
+        // 🧠 SMART LENGTH CONTROL
+        // ===============================
+        const lengthControl = `
+- If question is simple → give short answer (2–3 sentences)
+- If user asks "more", "details", or complex query → give detailed answer (4–6 sentences)
+`;
+
+        // ===============================
+        // 🧠 FINAL SYSTEM PROMPT
         // ===============================
         const finalSystemPrompt = `
-You are a highly intelligent AI assistant for a website.
+You are an advanced AI assistant for a website.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🎯 CORE OBJECTIVE
+🎯 OBJECTIVE
 ━━━━━━━━━━━━━━━━━━━━━━━
-Help users understand the website clearly using ONLY provided context.
+Help users clearly understand the website using ONLY provided context.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🚨 STRICT RULES (CRITICAL)
+🚨 STRICT RULES
 ━━━━━━━━━━━━━━━━━━━━━━━
-- NEVER hallucinate or guess
+- NEVER hallucinate
 - NEVER use outside knowledge
 - NEVER mention another company
-- NEVER show reasoning or thinking
-- NEVER output analysis like:
+- NEVER show thinking or reasoning steps
+- NEVER output phrases like:
   "Okay, the user..."
-  "Let me check..."
+  "Let me think..."
   "Based on reasoning..."
 
 - ONLY give FINAL answer
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🧠 RESPONSE LOGIC
+🧠 RESPONSE BEHAVIOR
 ━━━━━━━━━━━━━━━━━━━━━━━
+${lengthControl}
 
-IF question is:
-- Pricing → extract numbers EXACTLY
-- Services → summarize clearly
-- Projects → give examples if available
-- General → explain simply
+- Services → explain clearly
+- Pricing → extract numbers exactly
+- Projects → give examples
+- General → summarize properly
+
+- If user asks again → expand answer
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ IF DATA IS MISSING
+⚠️ IF DATA IS LIMITED
 ━━━━━━━━━━━━━━━━━━━━━━━
 Say:
 ${lang === "mr"
-                ? "या वेबसाइटवर त्या बद्दल स्पष्ट माहिती उपलब्ध नाही, पण मी संबंधित माहिती देऊ शकतो."
-                : "I don’t see exact information on that page, but I can help with related details."
+                ? "पूर्ण माहिती उपलब्ध नाही, पण मी संबंधित माहिती देऊ शकतो."
+                : "Exact information is limited, but I can help with related details."
             }
-
-DO NOT:
-- invent data
-- give fake pricing
-- give generic answers repeatedly
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 💬 STYLE
 ━━━━━━━━━━━━━━━━━━━━━━━
-- 2–4 sentences ONLY
 - Human-like tone
-- Clear & confident
+- Clear and confident
 - No repetition
+- No robotic replies
 
-- Ask 1 natural follow-up question
+- Always ask 1 natural follow-up question
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🌐 LANGUAGE
@@ -169,8 +177,8 @@ ${systemPrompt}
                     { role: "system", content: finalSystemPrompt },
                     { role: "user", content: userQuery },
                 ],
-                temperature: 0.3, // 🔥 stable answers
-                max_tokens: 180,
+                temperature: 0.4, // slightly more natural
+                max_tokens: 250, // 🔥 increased for better answers
                 top_p: 0.9,
             },
             {
@@ -183,16 +191,16 @@ ${systemPrompt}
         let aiText =
             response?.data?.choices?.[0]?.message?.content || "";
 
-        console.log("📥 RAW:", aiText.slice(0, 100));
+        console.log("📥 RAW:", aiText.slice(0, 120));
 
         // ===============================
-        // 🧹 CLEAN + FIX
+        // 🧹 CLEAN OUTPUT
         // ===============================
         aiText = cleanOutput(aiText);
         aiText = fixNumbers(aiText);
 
         // ===============================
-        // 🚨 FINAL SAFETY
+        // 🚨 FALLBACK
         // ===============================
         if (!aiText || aiText.length < 10) {
             aiText =
@@ -201,6 +209,7 @@ ${systemPrompt}
                     : "I can help you. Please ask your question clearly.";
         }
 
+        // ensure sentence end
         if (!/[.!?]$/.test(aiText)) {
             aiText += ".";
         }

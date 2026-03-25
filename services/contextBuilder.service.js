@@ -6,13 +6,13 @@ import { searchSimilar } from "./vectorStore.service.js";
 const normalizeQuery = (query, language) => {
     let q = query.toLowerCase();
 
-    // Marathi → English mapping (lightweight)
     if (language === "mr") {
         const map = {
             "माहिती": "information",
             "किंमत": "price",
             "सेवा": "services",
             "प्रोजेक्ट": "projects",
+            "कोर्स": "course",
         };
 
         Object.keys(map).forEach((k) => {
@@ -24,7 +24,7 @@ const normalizeQuery = (query, language) => {
 };
 
 // ===============================
-// 🧠 REMOVE NOISE (GENERIC)
+// 🧠 REMOVE GARBAGE CONTENT
 // ===============================
 const isGarbage = (text) => {
     const t = text.toLowerCase();
@@ -32,14 +32,14 @@ const isGarbage = (text) => {
     return (
         t.includes("cookie") ||
         t.includes("privacy policy") ||
-        t.includes("terms of use") ||
+        t.includes("terms") ||
         t.includes("all rights reserved") ||
         t.length < 40
     );
 };
 
 // ===============================
-// 🧠 SEMANTIC BOOST (GENERIC)
+// 🧠 SMART SEMANTIC BOOST
 // ===============================
 const semanticBoost = (chunk, query) => {
     const text = chunk.content.toLowerCase();
@@ -50,20 +50,20 @@ const semanticBoost = (chunk, query) => {
     const words = q.split(" ").filter(w => w.length > 3);
 
     words.forEach(word => {
-        if (text.includes(word)) boost += 0.2;
+        if (text.includes(word)) boost += 0.25;
     });
 
-    // detect numbers (pricing / stats)
-    if (/\d/.test(text)) boost += 0.1;
+    // numbers = pricing / stats
+    if (/\d/.test(text)) boost += 0.15;
 
-    // detect headings
+    // shorter chunks = more focused
     if (text.length < 300) boost += 0.1;
 
     return chunk.score + boost;
 };
 
 // ===============================
-// 🧠 BUILD CONTEXT (UNIVERSAL)
+// 🧠 BUILD CONTEXT (SMART + UNIVERSAL)
 // ===============================
 export const buildContext = async (query, language = "en") => {
     const startTime = Date.now();
@@ -72,12 +72,12 @@ export const buildContext = async (query, language = "en") => {
         const searchQuery = normalizeQuery(query, language);
 
         // ===============================
-        // 🔍 VECTOR SEARCH
+        // 🔍 VECTOR SEARCH (HIGH RECALL)
         // ===============================
-        let chunks = await searchSimilar(searchQuery, 12);
+        let chunks = await searchSimilar(searchQuery, 15);
 
         // ===============================
-        // 🔥 CLEAN + FILTER
+        // 🧹 REMOVE NOISE
         // ===============================
         chunks = chunks.filter(c => {
             const text = c.content || "";
@@ -85,7 +85,7 @@ export const buildContext = async (query, language = "en") => {
         });
 
         // ===============================
-        // 🔥 SEMANTIC RANKING (KEY)
+        // 🔥 SEMANTIC RANKING
         // ===============================
         chunks = chunks
             .map(c => ({
@@ -95,75 +95,104 @@ export const buildContext = async (query, language = "en") => {
             .sort((a, b) => b.finalScore - a.finalScore);
 
         // ===============================
-        // 🔥 FALLBACK (CRITICAL)
+        // 🔥 FALLBACK SEARCH
         // ===============================
-        if (chunks.length < 3) {
-            const fallback = await searchSimilar(query, 6);
+        if (chunks.length < 4) {
+            const fallback = await searchSimilar(query, 8);
             chunks = [...chunks, ...fallback];
         }
 
         // ===============================
-        // 🔥 REMOVE DUPLICATES
+        // 🔁 REMOVE DUPLICATES
         // ===============================
         chunks = [
             ...new Map(chunks.map(c => [c.content, c])).values()
         ];
 
         // ===============================
-        // 🧹 BUILD CONTEXT
+        // 🧠 BUILD FINAL CONTEXT
         // ===============================
         let context = chunks
-            .slice(0, 6)
+            .slice(0, 8)
             .map(c => c.content)
             .join("\n\n")
             .replace(/\s+/g, " ")
             .trim()
-            .slice(0, 1800);
+            .slice(0, 2000);
 
         // ===============================
-        // 🌐 LANGUAGE
+        // 🌐 LANGUAGE CONTROL
         // ===============================
         const isMarathi = language === "mr";
 
         const languageRule = isMarathi
-            ? "Respond ONLY in Marathi. Be natural and conversational."
-            : "Respond ONLY in English. Be natural and conversational.";
+            ? `
+Respond ONLY in Marathi.
+- Use natural spoken Marathi
+- Expand answers when needed
+`
+            : `
+Respond ONLY in English.
+- Be natural, clear, and conversational
+- Expand answers when needed
+`;
 
         // ===============================
-        // 🧠 FINAL SYSTEM PROMPT (GENERIC)
+        // 🧠 FINAL SYSTEM PROMPT (UPGRADED)
         // ===============================
         const systemPrompt = `
 You are an intelligent AI assistant for a website.
 
-🎯 OBJECTIVE:
-Help users understand the website content clearly and naturally.
+━━━━━━━━━━━━━━━━━━━━━━━
+🎯 OBJECTIVE
+━━━━━━━━━━━━━━━━━━━━━━━
+Help users clearly understand the website using the provided context.
 
-📌 RULES:
-- Use CONTEXT as main source
-- If context is weak → still guide user intelligently
-- NEVER hallucinate fake details
-- Keep answers SHORT (2–4 sentences)
-- Sound human, friendly, and confident
-- Avoid robotic or repetitive replies
+━━━━━━━━━━━━━━━━━━━━━━━
+📌 RULES
+━━━━━━━━━━━━━━━━━━━━━━━
+- Use CONTEXT as primary source
+- NEVER hallucinate fake data
+- NEVER repeat same sentences
+- NEVER sound robotic
 
-- If user asks:
-  → about services → explain clearly
-  → about pricing → mention numbers if present
-  → about projects/products → give examples
-  → general question → summarize relevant info
+━━━━━━━━━━━━━━━━━━━━━━━
+🧠 RESPONSE BEHAVIOR
+━━━━━━━━━━━━━━━━━━━━━━━
+- Simple question → short answer (2–3 sentences)
+- Detailed question → longer answer (4–6 sentences)
+- If user asks again → expand further
 
-- If info not clearly available:
-  ${isMarathi
-                ? "पूर्ण माहिती उपलब्ध नाही, पण मी मदत करण्याचा प्रयत्न करतो."
-                : "Exact information is limited, but I’ll help based on available content."
+- Services → explain clearly
+- Pricing → extract numbers if present
+- Projects/products → give examples
+- General → summarize meaningfully
+
+━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ IF INFO IS LIMITED
+━━━━━━━━━━━━━━━━━━━━━━━
+${isMarathi
+                ? "पूर्ण माहिती उपलब्ध नाही, पण मी उपलब्ध माहितीवर आधारित मदत करू शकतो."
+                : "Exact information is limited, but I can guide you based on available content."
             }
 
-- ALWAYS ask 1 follow-up question
+━━━━━━━━━━━━━━━━━━━━━━━
+💬 STYLE
+━━━━━━━━━━━━━━━━━━━━━━━
+- Human-like and friendly
+- Clear and confident
+- No unnecessary repetition
 
-🌐 LANGUAGE:
+- Always ask 1 natural follow-up question
+
+━━━━━━━━━━━━━━━━━━━━━━━
+🌐 LANGUAGE
+━━━━━━━━━━━━━━━━━━━━━━━
 ${languageRule}
 
-📚 CONTEXT:
+━━━━━━━━━━━━━━━━━━━━━━━
+📚 CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━
 ${context}
 `;
 
@@ -178,7 +207,10 @@ ${context}
         console.error("❌ Context Builder Error:", error.message);
 
         return {
-            systemPrompt: "You are a helpful assistant.",
+            systemPrompt: `
+You are a helpful AI assistant.
+Answer clearly and naturally.
+`,
             userQuery: query,
         };
     }
