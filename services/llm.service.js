@@ -23,25 +23,34 @@ const detectLanguage = (text) => {
 };
 
 // ===============================
-// 🧹 ADVANCED CLEAN OUTPUT
+// 🧹 ULTRA CLEAN OUTPUT (STRICT)
 // ===============================
 const cleanOutput = (text) => {
     if (!text) return "";
 
-    return text
-        // remove hidden reasoning
+    let cleaned = text
+        // remove hidden reasoning blocks
         .replace(/<think[\s\S]*?<\/think>/gi, "")
         .replace(/```[\s\S]*?```/g, "")
         .replace(/<[^>]*>/g, "")
 
-        // 🔥 kill reasoning leaks aggressively
-        .replace(/(okay|let me|i think|based on|the user is asking)[\s\S]*?:/gi, "")
-        .replace(/(the user is asking)[\s\S]*/gi, "")
+        // 🚨 kill reasoning leaks completely
+        .replace(/okay[, ]?the user[\s\S]*/gi, "")
+        .replace(/let me[\s\S]*/gi, "")
+        .replace(/i think[\s\S]*/gi, "")
+        .replace(/hmm[\s\S]*/gi, "")
+        .replace(/based on[\s\S]*/gi, "")
+        .replace(/looking at[\s\S]*/gi, "")
+        .replace(/since the context[\s\S]*/gi, "")
+        .replace(/the user might[\s\S]*/gi, "")
+        .replace(/the assistant['’]s rules[\s\S]*/gi, "")
 
-        // clean spaces
+        // clean formatting
         .replace(/\n+/g, " ")
         .replace(/\s+/g, " ")
         .trim();
+
+    return cleaned;
 };
 
 // ===============================
@@ -84,76 +93,55 @@ export const generateResponse = async (systemPrompt, userQuery) => {
                 ? `
 Respond ONLY in Marathi.
 - Use natural spoken Marathi
-- Keep it human and conversational
+- Be clear and human-like
 `
                 : `
 Respond ONLY in English.
-- Be natural, clear, and conversational
+- Be clear, natural, and conversational
 `;
 
         // ===============================
-        // 🧠 SMART LENGTH CONTROL
-        // ===============================
-        const lengthControl = `
-- If question is simple → give short answer (2–3 sentences)
-- If user asks "more", "details", or complex query → give detailed answer (4–6 sentences)
-`;
-
-        // ===============================
-        // 🧠 FINAL SYSTEM PROMPT
+        // 🧠 RESPONSE CONTROL
         // ===============================
         const finalSystemPrompt = `
-You are an advanced AI assistant for a website.
+You are a smart AI assistant for a website.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🎯 OBJECTIVE
 ━━━━━━━━━━━━━━━━━━━━━━━
-Help users clearly understand the website using ONLY provided context.
+Answer the user using ONLY the provided context.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🚨 STRICT RULES
 ━━━━━━━━━━━━━━━━━━━━━━━
 - NEVER hallucinate
 - NEVER use outside knowledge
-- NEVER mention another company
-- NEVER show thinking or reasoning steps
-- NEVER output phrases like:
+- NEVER show internal thinking
+- NEVER output:
   "Okay, the user..."
   "Let me think..."
   "Based on reasoning..."
 
-- ONLY give FINAL answer
+- ONLY give final clean answer
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🧠 RESPONSE BEHAVIOR
+🧠 RESPONSE STYLE
 ━━━━━━━━━━━━━━━━━━━━━━━
-${lengthControl}
+- Be clear and helpful
+- Use 2–5 sentences (expand if needed)
+- Avoid repeating same lines
+- Sound natural and human
 
-- Services → explain clearly
-- Pricing → extract numbers exactly
-- Projects → give examples
-- General → summarize properly
-
-- If user asks again → expand answer
+- If user asks again → give more detail
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ IF DATA IS LIMITED
+⚠️ IF INFO IS LIMITED
 ━━━━━━━━━━━━━━━━━━━━━━━
 Say:
 ${lang === "mr"
                 ? "पूर्ण माहिती उपलब्ध नाही, पण मी संबंधित माहिती देऊ शकतो."
-                : "Exact information is limited, but I can help with related details."
+                : "I don’t see exact details, but I can guide you based on available information."
             }
-
-━━━━━━━━━━━━━━━━━━━━━━━
-💬 STYLE
-━━━━━━━━━━━━━━━━━━━━━━━
-- Human-like tone
-- Clear and confident
-- No repetition
-- No robotic replies
-
-- Always ask 1 natural follow-up question
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🌐 LANGUAGE
@@ -177,8 +165,8 @@ ${systemPrompt}
                     { role: "system", content: finalSystemPrompt },
                     { role: "user", content: userQuery },
                 ],
-                temperature: 0.4, // slightly more natural
-                max_tokens: 250, // 🔥 increased for better answers
+                temperature: 0.4,
+                max_tokens: 250,
                 top_p: 0.9,
             },
             {
@@ -194,10 +182,27 @@ ${systemPrompt}
         console.log("📥 RAW:", aiText.slice(0, 120));
 
         // ===============================
-        // 🧹 CLEAN OUTPUT
+        // 🧹 CLEAN + FIX
         // ===============================
         aiText = cleanOutput(aiText);
         aiText = fixNumbers(aiText);
+
+        // ===============================
+        // 🚨 HARD SAFETY FILTER
+        // ===============================
+        const lower = aiText.toLowerCase();
+
+        if (
+            lower.includes("the user") ||
+            lower.includes("let me") ||
+            lower.includes("i think") ||
+            lower.includes("okay")
+        ) {
+            aiText =
+                lang === "mr"
+                    ? "मी तुमच्या प्रश्नाचे स्पष्ट उत्तर देतो."
+                    : "Here’s a clear answer to your question.";
+        }
 
         // ===============================
         // 🚨 FALLBACK
@@ -209,7 +214,7 @@ ${systemPrompt}
                     : "I can help you. Please ask your question clearly.";
         }
 
-        // ensure sentence end
+        // ensure proper ending
         if (!/[.!?]$/.test(aiText)) {
             aiText += ".";
         }
