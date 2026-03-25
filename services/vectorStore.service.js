@@ -1,5 +1,18 @@
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
 import { generateEmbedding } from "./embedding.service.js";
 import { loadWebsiteContent } from "./context.service.js";
+
+// ===============================
+// 🧠 FIX PATH FOR RENDER
+// ===============================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// IMPORTANT: always resolve absolute path
+const VECTOR_FILE = path.join(__dirname, "../data/vectorStore.json");
 
 // ===============================
 // 🧠 IN-MEMORY VECTOR STORE
@@ -7,7 +20,7 @@ import { loadWebsiteContent } from "./context.service.js";
 let vectorStore = [];
 
 // ===============================
-// 🧹 CLEAR VECTOR STORE (CRITICAL)
+// 🧹 CLEAR VECTOR STORE
 // ===============================
 export const clearVectorStore = () => {
     vectorStore = [];
@@ -33,12 +46,30 @@ const splitIntoChunks = (text, chunkSize = 300) => {
 };
 
 // ===============================
-// 🚀 BUILD VECTOR STORE
+// 🚀 BUILD / LOAD VECTOR STORE
 // ===============================
 export const buildVectorStore = async () => {
-    console.log("📦 Building vector store...");
+    console.log("📦 Initializing vector store...");
+    console.log("📁 Looking for cache at:", VECTOR_FILE);
 
-    // 🔥 VERY IMPORTANT: clear old data
+    // ===============================
+    // ⚡ LOAD FROM CACHE
+    // ===============================
+    if (fs.existsSync(VECTOR_FILE)) {
+        console.log("⚡ Loading cached vector store...");
+
+        const raw = fs.readFileSync(VECTOR_FILE, "utf-8");
+        vectorStore = JSON.parse(raw);
+
+        console.log(`✅ Loaded ${vectorStore.length} cached vectors`);
+        return;
+    }
+
+    // ===============================
+    // 🐢 BUILD FROM SCRATCH
+    // ===============================
+    console.log("🐢 No cache found, building vector store...");
+
     clearVectorStore();
 
     const content = loadWebsiteContent();
@@ -65,7 +96,19 @@ export const buildVectorStore = async () => {
         }
     }
 
-    console.log(`🚀 Vector store ready with ${vectorStore.length} chunks`);
+    // ===============================
+    // 💾 SAVE CACHE
+    // ===============================
+    const dataDir = path.join(__dirname, "../data");
+
+    if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir);
+    }
+
+    fs.writeFileSync(VECTOR_FILE, JSON.stringify(vectorStore));
+
+    console.log(`💾 Vector store cached (${vectorStore.length} chunks)`);
+    console.log("🚀 Vector store ready");
 };
 
 // ===============================
@@ -96,7 +139,6 @@ export const searchSimilar = async (query, topK = 5) => {
         score: cosineSimilarity(queryEmbedding, item.embedding),
     }));
 
-    // sort descending
     scored.sort((a, b) => b.score - a.score);
 
     return scored.slice(0, topK);
