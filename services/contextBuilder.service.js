@@ -4,7 +4,7 @@ import { searchSimilar } from "./vectorStore.service.js";
 // 🌍 LANGUAGE NORMALIZATION
 // ===============================
 const normalizeQuery = (query, language) => {
-    let q = query.toLowerCase();
+    let q = query.toLowerCase().trim();
 
     if (language === "mr") {
         const map = {
@@ -24,9 +24,9 @@ const normalizeQuery = (query, language) => {
 };
 
 // ===============================
-// 🧠 REMOVE GARBAGE CONTENT
+// 🧹 REMOVE GARBAGE CONTENT
 // ===============================
-const isGarbage = (text) => {
+const isGarbage = (text = "") => {
     const t = text.toLowerCase();
 
     return (
@@ -34,36 +34,38 @@ const isGarbage = (text) => {
         t.includes("privacy policy") ||
         t.includes("terms") ||
         t.includes("all rights reserved") ||
-        t.length < 40
+        t.includes("subscribe") ||
+        t.includes("login") ||
+        t.length < 50
     );
 };
 
 // ===============================
-// 🧠 SMART SEMANTIC BOOST
+// 🧠 SEMANTIC BOOST (IMPROVED)
 // ===============================
 const semanticBoost = (chunk, query) => {
-    const text = chunk.content.toLowerCase();
+    const text = (chunk.content || "").toLowerCase();
     const q = query.toLowerCase();
 
-    let boost = 0;
+    let boost = chunk.score || 0;
 
     const words = q.split(" ").filter(w => w.length > 3);
 
     words.forEach(word => {
-        if (text.includes(word)) boost += 0.25;
+        if (text.includes(word)) boost += 0.3;
     });
 
-    // numbers = pricing / stats
-    if (/\d/.test(text)) boost += 0.15;
+    // numbers = pricing / stats importance
+    if (/\d/.test(text)) boost += 0.2;
 
-    // shorter chunks = more focused
-    if (text.length < 300) boost += 0.1;
+    // concise chunks = better answers
+    if (text.length < 300) boost += 0.15;
 
-    return chunk.score + boost;
+    return boost;
 };
 
 // ===============================
-// 🧠 BUILD CONTEXT (SMART + UNIVERSAL)
+// 🧠 BUILD CONTEXT (FINAL)
 // ===============================
 export const buildContext = async (query, language = "en") => {
     const startTime = Date.now();
@@ -72,17 +74,14 @@ export const buildContext = async (query, language = "en") => {
         const searchQuery = normalizeQuery(query, language);
 
         // ===============================
-        // 🔍 VECTOR SEARCH (HIGH RECALL)
+        // 🔍 VECTOR SEARCH
         // ===============================
         let chunks = await searchSimilar(searchQuery, 15);
 
         // ===============================
         // 🧹 REMOVE NOISE
         // ===============================
-        chunks = chunks.filter(c => {
-            const text = c.content || "";
-            return !isGarbage(text);
-        });
+        chunks = chunks.filter(c => !isGarbage(c.content));
 
         // ===============================
         // 🔥 SEMANTIC RANKING
@@ -95,11 +94,14 @@ export const buildContext = async (query, language = "en") => {
             .sort((a, b) => b.finalScore - a.finalScore);
 
         // ===============================
-        // 🔥 FALLBACK SEARCH
+        // 🔁 FALLBACK SEARCH (SMART)
         // ===============================
         if (chunks.length < 4) {
-            const fallback = await searchSimilar(query, 8);
-            chunks = [...chunks, ...fallback];
+            const fallback = await searchSimilar(query, 10);
+
+            const cleanFallback = fallback.filter(c => !isGarbage(c.content));
+
+            chunks = [...chunks, ...cleanFallback];
         }
 
         // ===============================
@@ -117,8 +119,10 @@ export const buildContext = async (query, language = "en") => {
             .map(c => c.content)
             .join("\n\n")
             .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 2000);
+            .trim();
+
+        // limit size for LLM
+        context = context.slice(0, 2000);
 
         // ===============================
         // 🌐 LANGUAGE CONTROL
@@ -129,51 +133,50 @@ export const buildContext = async (query, language = "en") => {
             ? `
 Respond ONLY in Marathi.
 - Use natural spoken Marathi
-- Expand answers when needed
+- Be clear and human-like
 `
             : `
 Respond ONLY in English.
 - Be natural, clear, and conversational
-- Expand answers when needed
 `;
 
         // ===============================
-        // 🧠 FINAL SYSTEM PROMPT (UPGRADED)
+        // 🧠 FINAL SYSTEM PROMPT
         // ===============================
         const systemPrompt = `
-You are an intelligent AI assistant for a website.
+You are a smart AI assistant for a website.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🎯 OBJECTIVE
 ━━━━━━━━━━━━━━━━━━━━━━━
-Help users clearly understand the website using the provided context.
+Answer the user's question using ONLY the provided context.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-📌 RULES
+🚨 STRICT RULES
 ━━━━━━━━━━━━━━━━━━━━━━━
-- Use CONTEXT as primary source
-- NEVER hallucinate fake data
-- NEVER repeat same sentences
+- NEVER hallucinate
+- NEVER use outside knowledge
+- NEVER repeat same lines
 - NEVER sound robotic
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧠 RESPONSE BEHAVIOR
 ━━━━━━━━━━━━━━━━━━━━━━━
 - Simple question → short answer (2–3 sentences)
-- Detailed question → longer answer (4–6 sentences)
-- If user asks again → expand further
+- Detailed question → longer answer (3–5 sentences)
+- If user asks again → expand answer
 
 - Services → explain clearly
-- Pricing → extract numbers if present
-- Projects/products → give examples
-- General → summarize meaningfully
+- Pricing → extract exact numbers if present
+- Projects → give examples if available
+- General → summarize clearly
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ IF INFO IS LIMITED
 ━━━━━━━━━━━━━━━━━━━━━━━
 ${isMarathi
                 ? "पूर्ण माहिती उपलब्ध नाही, पण मी उपलब्ध माहितीवर आधारित मदत करू शकतो."
-                : "Exact information is limited, but I can guide you based on available content."
+                : "I don’t see exact details, but I can guide you based on available information."
             }
 
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -182,8 +185,6 @@ ${isMarathi
 - Human-like and friendly
 - Clear and confident
 - No unnecessary repetition
-
-- Always ask 1 natural follow-up question
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🌐 LANGUAGE
